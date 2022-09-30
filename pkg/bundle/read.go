@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	fleet "github.com/rancher/fleet/pkg/apis/fleet.cattle.io/v1alpha1"
 	"github.com/rancher/fleet/pkg/bundleyaml"
@@ -186,6 +187,8 @@ func read(ctx context.Context, name, baseDir string, bundleSpecReader io.Reader,
 
 	setTargetNames(&bundle.BundleSpec)
 
+	fixAndApplyHelmSpec(&bundle.BundleSpec)
+
 	resources, err := readResources(ctx, &bundle.BundleSpec, opts.Compress, baseDir, opts.Auth)
 	if err != nil {
 		return nil, err
@@ -245,6 +248,39 @@ func read(ctx context.Context, name, baseDir string, bundleSpecReader io.Reader,
 	}
 
 	return New(def, scans...)
+}
+
+// fixAndApplyHelmSpec checks if the spec's Helm repo, if there is one, ends with a '/' and appends one if not. See chartURL
+// This function also propagates root Helm chart properties to the child targets and performs the repo check.
+// Note: The repo and version properties of child targets are only propagated if either property is overridden. This
+// allows child targets to specify a path to a chart, to specify a url to the chart(e.g. oci://), etc.
+func fixAndApplyHelmSpec(spec *fleet.BundleSpec) {
+	if spec.Helm != nil && spec.Helm.Chart != "" {
+		if spec.Helm.Repo != "" && !strings.HasSuffix(spec.Helm.Repo, "/") {
+			spec.Helm.Repo = spec.Helm.Repo + "/"
+		}
+	}
+
+	for _, target := range spec.Targets {
+		if target.Helm != nil && spec.Helm != nil {
+			if target.Helm.Repo != "" || target.Helm.Version != "" {
+				if target.Helm.Repo == "" {
+					target.Helm.Repo = spec.Helm.Repo
+				}
+				if target.Helm.Version == "" {
+					target.Helm.Version = spec.Helm.Version
+				}
+			}
+
+			if target.Helm.Chart == "" {
+				target.Helm.Chart = spec.Helm.Chart
+			}
+
+		}
+		if target.Helm != nil && target.Helm.Repo != "" && !strings.HasSuffix(target.Helm.Repo, "/") {
+			target.Helm.Repo = target.Helm.Repo + "/"
+		}
+	}
 }
 
 func appendTargets(def *fleet.Bundle, targetsFile string) (*fleet.Bundle, error) {
