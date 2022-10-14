@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/hashicorp/go-getter"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -187,7 +189,8 @@ func read(ctx context.Context, name, baseDir string, bundleSpecReader io.Reader,
 
 	setTargetNames(&bundle.BundleSpec)
 
-	fixAndApplyHelmSpec(&bundle.BundleSpec)
+	ensureValidHelmRepo(&bundle.BundleSpec)
+	propagateHelmChartProperties(&bundle.BundleSpec, baseDir)
 
 	resources, err := readResources(ctx, &bundle.BundleSpec, opts.Compress, baseDir, opts.Auth)
 	if err != nil {
@@ -250,36 +253,63 @@ func read(ctx context.Context, name, baseDir string, bundleSpecReader io.Reader,
 	return New(def, scans...)
 }
 
-// fixAndApplyHelmSpec checks if the spec's Helm repo, if there is one, ends with a '/' and appends one if not. See chartURL
-// This function also propagates root Helm chart properties to the child targets and performs the repo check.
-// Note: The repo and version properties of child targets are only propagated if either property is overridden. This
-// allows child targets to specify a path to a chart, to specify a url to the chart(e.g. oci://), etc.
-func fixAndApplyHelmSpec(spec *fleet.BundleSpec) {
-	if spec.Helm != nil && spec.Helm.Chart != "" {
+//ensureValidHelmRepo ensures that the Helm repo in the spec and all target customizations end with a '/', if any exist.
+//A '/' is appended if not. See chartURL
+func ensureValidHelmRepo(spec *fleet.BundleSpec) {
+	if spec.Helm != nil {
 		if spec.Helm.Repo != "" && !strings.HasSuffix(spec.Helm.Repo, "/") {
 			spec.Helm.Repo = spec.Helm.Repo + "/"
 		}
 	}
 
 	for _, target := range spec.Targets {
-		if target.Helm != nil && spec.Helm != nil {
-			if target.Helm.Repo != "" || target.Helm.Version != "" {
-				if target.Helm.Repo == "" {
-					target.Helm.Repo = spec.Helm.Repo
-				}
-				if target.Helm.Version == "" {
-					target.Helm.Version = spec.Helm.Version
-				}
-			}
-
-			if target.Helm.Chart == "" {
-				target.Helm.Chart = spec.Helm.Chart
-			}
-
+		if target.Helm == nil || target.Helm.Repo == "" {
+			continue
 		}
-		if target.Helm != nil && target.Helm.Repo != "" && !strings.HasSuffix(target.Helm.Repo, "/") {
+		if !strings.HasSuffix(target.Helm.Repo, "/") {
 			target.Helm.Repo = target.Helm.Repo + "/"
 		}
+	}
+}
+
+// propagateHelmChartProperties propagates root Helm chart properties to the child targets.
+func propagateHelmChartProperties(spec *fleet.BundleSpec, baseDir string) {
+	//Check if there is anything to propagate
+	if spec.Helm == nil {
+		return
+	}
+	for _, target := range spec.Targets {
+		if target.Helm == nil {
+			//This target has nothing to propagate to.
+			continue
+		}
+		if target.Helm.Chart == "" {
+			target.Helm.Chart = spec.Helm.Chart
+		}
+
+		_, detectErr := getter.Detect(target.Helm.Chart, baseDir, getter.Detectors)
+		if detectErr == nil {
+			//This target is using a go-getter chart value, no need to propagate anything.
+			continue
+		}
+
+		// This chart is either an oci registry chart or a chart repository chart, we need to propagate the version.
+		if target.Helm.Version == "" {
+			target.Helm.Version = spec.Helm.Version
+		}
+
+		hasOCIURL, _ := regexp.MatchString(`^oci:\/\/`, target.Helm.Chart)
+		if hasOCIURL {
+			// This is an oci registry chart, we are all done
+			continue
+		}
+
+		// This chart is neither a go-getter chart nor an oci registry chart, it must be a chart repository chart.
+		// We need to propagate the repo.
+		if target.Helm.Repo == "" {
+			target.Helm.Repo = spec.Helm.Repo
+		}
+
 	}
 }
 

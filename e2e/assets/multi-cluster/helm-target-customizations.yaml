@@ -3,7 +3,7 @@ apiVersion: fleet.cattle.io/v1alpha1
 metadata:
   name: helm-target-customizations
 spec:
-  repo: https://github.com/rancher/fleet-examples
+  repo: https://github.com/romejoe/fleet-examples
   branch: add_target_customizations_test
   paths:
   - multi-cluster/helm-target-customizations/
