@@ -147,6 +147,18 @@ func (h *handler) authorizeAndAssignDefaults(gitrepo *fleet.GitRepo) (*fleet.Git
 	restriction := aggregate(restrictions)
 	gitrepo = gitrepo.DeepCopy()
 
+	if len(restriction.AllowedTargetNamespaces) > 0 && gitrepo.Spec.TargetNamespace == "" {
+		return nil, fmt.Errorf("empty targetNamespace denied, because allowedTargetNamespaces restriction is present")
+	}
+
+	gitrepo.Spec.TargetNamespace, err = isAllowed(gitrepo.Spec.TargetNamespace,
+		"",
+		restriction.AllowedTargetNamespaces,
+		false)
+	if err != nil {
+		return nil, fmt.Errorf("disallowed targetNamespace %s: %w", gitrepo.Spec.TargetNamespace, err)
+	}
+
 	gitrepo.Spec.ServiceAccount, err = isAllowed(gitrepo.Spec.ServiceAccount,
 		restriction.DefaultServiceAccount,
 		restriction.AllowedServiceAccounts,
@@ -213,6 +225,7 @@ func aggregate(restrictions []*fleet.GitRepoRestriction) (result fleet.GitRepoRe
 		result.AllowedServiceAccounts = append(result.AllowedServiceAccounts, restriction.AllowedServiceAccounts...)
 		result.AllowedClientSecretNames = append(result.AllowedClientSecretNames, restriction.AllowedClientSecretNames...)
 		result.AllowedRepoPatterns = append(result.AllowedRepoPatterns, restriction.AllowedRepoPatterns...)
+		result.AllowedTargetNamespaces = append(result.AllowedTargetNamespaces, restriction.AllowedTargetNamespaces...)
 	}
 	return
 }
@@ -271,7 +284,18 @@ func mergeConditions(existing, next []genericcondition.GenericCondition) []gener
 	return result
 }
 
+func accpetedLastUpdate(conds []genericcondition.GenericCondition) string {
+	for _, cond := range conds {
+		if cond.Type == "Accepted" {
+			return cond.LastUpdateTime
+		}
+	}
+
+	return ""
+}
+
 func (h *handler) OnChange(gitrepo *fleet.GitRepo, status fleet.GitRepoStatus) ([]runtime.Object, fleet.GitRepoStatus, error) {
+	logrus.Debugf("OnChange GitRepo %s/%s for commit %s last accepted at %s", gitrepo.Namespace, gitrepo.Name, gitrepo.Status.Commit, accpetedLastUpdate(gitrepo.Status.Conditions))
 	status.ObservedGeneration = gitrepo.Generation
 
 	if gitrepo.Spec.Repo == "" {
