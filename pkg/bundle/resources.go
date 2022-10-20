@@ -103,6 +103,15 @@ type Auth struct {
 }
 
 func chartURL(location *fleet.HelmOptions, auth Auth) (string, error) {
+
+	hasOCIURL, err := regexp.MatchString(`^oci:\/\/`, location.Chart)
+	if err != nil {
+		return "", err
+	}
+	if hasOCIURL {
+		return location.Chart, nil
+	}
+
 	if location.Repo == "" {
 		return location.Chart, nil
 	}

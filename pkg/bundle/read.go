@@ -6,11 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/hashicorp/go-getter"
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -189,7 +187,7 @@ func read(ctx context.Context, name, baseDir string, bundleSpecReader io.Reader,
 
 	setTargetNames(&bundle.BundleSpec)
 
-	ensureValidHelmRepo(&bundle.BundleSpec)
+	//ensureValidHelmRepo(&bundle.BundleSpec)
 	propagateHelmChartProperties(&bundle.BundleSpec, baseDir)
 
 	resources, err := readResources(ctx, &bundle.BundleSpec, opts.Compress, baseDir, opts.Auth)
@@ -283,7 +281,17 @@ func propagateHelmChartProperties(spec *fleet.BundleSpec, baseDir string) {
 			//This target has nothing to propagate to.
 			continue
 		}
+		if target.Helm.Repo == "" {
+			target.Helm.Repo = spec.Helm.Repo
+		}
 		if target.Helm.Chart == "" {
+			target.Helm.Chart = spec.Helm.Chart
+		}
+		if target.Helm.Version == "" {
+			target.Helm.Version = spec.Helm.Version
+		}
+		continue
+		/*if target.Helm.Chart == "" {
 			target.Helm.Chart = spec.Helm.Chart
 		}
 
@@ -308,7 +316,7 @@ func propagateHelmChartProperties(spec *fleet.BundleSpec, baseDir string) {
 		// We need to propagate the repo.
 		if target.Helm.Repo == "" {
 			target.Helm.Repo = spec.Helm.Repo
-		}
+		}*/
 
 	}
 }
