@@ -4,6 +4,7 @@ package bundle
 import (
 	"context"
 	"sort"
+	"time"
 
 	"github.com/sirupsen/logrus"
 
@@ -58,6 +59,9 @@ func Register(ctx context.Context,
 		gitRepo:           gitRepo,
 	}
 
+	// A generating handler returns a list of objects to be created and
+	// updates the given condition in the status of the object.
+	// This handler is triggered for bundles.OnChange
 	fleetcontrollers.RegisterBundleGeneratingHandler(ctx,
 		bundles,
 		apply.WithCacheTypes(bundleDeployments),
@@ -78,6 +82,7 @@ func (h *handler) resolveApp(_ string, _ string, obj runtime.Object) ([]relatedr
 	if ad, ok := obj.(*fleet.BundleDeployment); ok {
 		ns, name := h.targets.BundleFromDeployment(ad)
 		if ns != "" && name != "" {
+			logrus.Debugf("enqueue bundle %s/%s for bundledeployment %s change", ns, name, ad.Name)
 			return []relatedresource.Key{
 				{
 					Namespace: ns,
@@ -93,6 +98,8 @@ func (h *handler) OnClusterChange(_ string, cluster *fleet.Cluster) (*fleet.Clus
 	if cluster == nil {
 		return nil, nil
 	}
+	logrus.Debugf("OnClusterChange for cluster '%s', checking which bundles to enqueue or cleanup", cluster.Name)
+	start := time.Now()
 
 	bundlesToRefresh, bundlesToCleanup, err := h.targets.BundlesForCluster(cluster)
 	if err != nil {
@@ -116,6 +123,9 @@ func (h *handler) OnClusterChange(_ string, cluster *fleet.Cluster) (*fleet.Clus
 		h.bundles.Enqueue(bundle.Namespace, bundle.Name)
 	}
 
+	elapsed := time.Since(start)
+	logrus.Debugf("OnClusterChange for cluster '%s' took %s", cluster.Name, elapsed)
+
 	return cluster, nil
 }
 
@@ -123,6 +133,7 @@ func (h *handler) OnPurgeOrphaned(key string, bundle *fleet.Bundle) (*fleet.Bund
 	if bundle == nil {
 		return bundle, nil
 	}
+	logrus.Debugf("OnPurgeOrphaned for bundle '%s' change, checking if gitrepo still exists", bundle.Name)
 
 	repo := bundle.Labels[fleet.RepoLabel]
 	if repo == "" {
@@ -143,6 +154,7 @@ func (h *handler) OnPurgeOrphanedImageScan(key string, image *fleet.ImageScan) (
 	if image == nil || image.DeletionTimestamp != nil {
 		return image, nil
 	}
+	logrus.Debugf("OnPurgeOrphanedImageScan for image '%s' change, checking if gitrepo still exists", image.Name)
 
 	repo := image.Spec.GitRepoName
 
@@ -157,6 +169,9 @@ func (h *handler) OnPurgeOrphanedImageScan(key string, image *fleet.ImageScan) (
 }
 
 func (h *handler) OnBundleChange(bundle *fleet.Bundle, status fleet.BundleStatus) ([]runtime.Object, fleet.BundleStatus, error) {
+	logrus.Debugf("OnBundleChange for bundle '%s', checking targets, calculating changes, building objects", bundle.Name)
+	start := time.Now()
+
 	targets, err := h.targets.Targets(bundle)
 	if err != nil {
 		return nil, status, err
@@ -172,7 +187,13 @@ func (h *handler) OnBundleChange(bundle *fleet.Bundle, status fleet.BundleStatus
 
 	summary.SetReadyConditions(&status, "Cluster", status.Summary)
 	status.ObservedGeneration = bundle.Generation
-	return toRuntimeObjects(targets, bundle), status, nil
+
+	objs := toRuntimeObjects(targets, bundle)
+
+	elapsed := time.Since(start)
+	logrus.Debugf("OnBundleChange for bundle '%s' took %s", bundle.Name, elapsed)
+
+	return objs, status, nil
 }
 
 func (h *handler) isNamespaced(gvk schema.GroupVersionKind) bool {
