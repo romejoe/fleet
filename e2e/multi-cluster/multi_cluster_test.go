@@ -133,17 +133,25 @@ var _ = Describe("Multi Cluster Examples", func() {
 			})
 
 			It("can replace the chart version and url", func() {
+				expectedVersion := "0.0.36"
+
+				// Verify bundledeployment changes
 				Eventually(func() string {
 					out, _ := helmVersion("helm-target-customizations")
 					return out
-				}).Should(ContainSubstring("0.0.36"))
+				}).Should(ContainSubstring(expectedVersion))
 
 				Eventually(func() string {
 					out, _ := helmRepo("helm-target-customizations")
 					return out
 				}).Should(ContainSubstring("https://charts.truecharts.org///"))
+
+				// Verify actual deployment downstream
+				Eventually(func() string {
+					out, _ := kd.Get("deployments", "-A", "-l", "helm.sh/chart=radicale-"+expectedVersion)
+					return out
+				}).Should(ContainSubstring("radicale"))
 			})
 		})
-
 	})
 })
